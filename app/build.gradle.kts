@@ -12,8 +12,19 @@ android {
         applicationId = "com.westly.westblock"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
+        // goes up with every GitHub build so Android treats each APK as an update
+        versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
         versionName = "1.0"
+    }
+
+    // One fixed key for every build, so a new APK installs over the old one (no uninstall needed)
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
