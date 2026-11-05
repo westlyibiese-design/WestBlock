@@ -2,6 +2,7 @@ package com.westly.westblock.vm
 
 import android.app.Application
 import android.content.Context
+import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -13,12 +14,15 @@ import com.westly.westblock.R
 import com.westly.westblock.audio.Haptics
 import com.westly.westblock.audio.SoundFx
 import com.westly.westblock.game.Board
+import com.westly.westblock.game.Cell
 import com.westly.westblock.game.Engine
 import com.westly.westblock.game.Piece
 import com.westly.westblock.game.SIZE
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.math.roundToInt
 
 /** A "+30" style popup floating up from a cell. */
@@ -69,11 +73,15 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
     private var nextFloatId = 0
     private var comboJob: Job? = null
 
+    // Secret helper: taps on the Score box (2) then the Best box (3) within 3 seconds.
+    private var secretCount = 0
+    private var secretStart = 0L
+
     init {
         best = prefs.getInt("best", 0)
         soundOn = prefs.getBoolean("sound", true)
         fx.enabled = soundOn
-        newGame()
+        if (!restoreGame()) newGame()
     }
 
     // ------------------------------------------------------------------ actions
@@ -93,6 +101,7 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
         shufflesLeft = 2
         gameOver = false
         tray = Engine.makeTray(board)
+        saveGame()
     }
 
     fun shuffle() {
@@ -100,6 +109,38 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
         shufflesLeft -= 1
         tray = Engine.makeTray(board, Engine.SMALL_SHAPES)   // Shuffle only gives small pieces
         haptics.tick(8)
+        saveGame()
+        checkGameOver()
+    }
+
+    /**
+     * A tap on the Score box ([score] = true) or the Best box. Score, Score, Best, Best, Best inside
+     * 3 seconds swaps the tray for 3 pieces that fit. Anything else does nothing and shows nothing.
+     */
+    fun onSecretTap(score: Boolean) {
+        val now = SystemClock.elapsedRealtime()
+        if (secretCount > 0 && now - secretStart > 3000L) secretCount = 0
+        val wantScore = secretCount < 2
+        if (score == wantScore) {
+            if (secretCount == 0) secretStart = now
+            secretCount++
+        } else if (score) {
+            secretCount = 1          // a Score tap can always be the start of a new try
+            secretStart = now
+        } else {
+            secretCount = 0
+        }
+        if (secretCount == 5) {
+            secretCount = 0
+            fitTray()
+        }
+    }
+
+    private fun fitTray() {
+        if (gameOver || isBusy) return
+        tray = Engine.makeFitTray(board)
+        haptics.tick(25)             // one tiny buzz, nothing on screen
+        saveGame()
         checkGameOver()
     }
 
@@ -151,11 +192,91 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
 
         if (tray.all { it == null }) tray = Engine.makeTray(board)
 
+        // Saved with the full lines already gone, so a game left during the flash comes back clean.
+        saveGame(if (n > 0) board.cleared(rows, cols) else board)
+
         if (n == 0) {
             clearStreak = 0
             checkGameOver()
         }
         return true
+    }
+
+    // ------------------------------------------------------------------ save and resume
+
+    /** Writes the game in progress (board, the 3 tray pieces, score, shuffles left) to the phone. */
+    private fun saveGame(b: Board = board) {
+        try {
+            val cells = JSONArray()
+            for (i in 0 until SIZE * SIZE) cells.put(b[i / SIZE, i % SIZE])
+            val t = JSONArray()
+            for (p in tray) {
+                if (p == null) {
+                    t.put(JSONObject.NULL)
+                } else {
+                    val sh = JSONArray()
+                    for (c in p.shape) {
+                        sh.put(c.r)
+                        sh.put(c.c)
+                    }
+                    t.put(JSONObject().put("s", sh).put("k", p.color).put("i", p.id))
+                }
+            }
+            val o = JSONObject()
+                .put("board", cells)
+                .put("tray", t)
+                .put("score", score)
+                .put("shuffles", shufflesLeft)
+            prefs.edit().putString("save", o.toString()).apply()
+        } catch (e: Exception) {
+            // saving is a bonus: never crash the game because of it
+        }
+    }
+
+    private fun clearSave() {
+        prefs.edit().remove("save").apply()
+    }
+
+    /** Loads the saved game. Returns false (and changes nothing) when there is none or it is damaged. */
+    private fun restoreGame(): Boolean {
+        val text = prefs.getString("save", null) ?: return false
+        return try {
+            val o = JSONObject(text)
+            val ca = o.getJSONArray("board")
+            val b = Board.fromInts(IntArray(SIZE * SIZE) { ca.getInt(it) }) ?: return false
+            val ta = o.getJSONArray("tray")
+            if (ta.length() != 3) return false
+            val pieces = ArrayList<Piece?>()
+            for (i in 0 until ta.length()) {
+                if (ta.isNull(i)) {
+                    pieces.add(null)
+                    continue
+                }
+                val po = ta.getJSONObject(i)
+                val sa = po.getJSONArray("s")
+                val shape = List(sa.length() / 2) { Cell(sa.getInt(it * 2), sa.getInt(it * 2 + 1)) }
+                if (shape.isEmpty()) return false
+                pieces.add(Piece(shape, po.getInt("k"), po.getLong("i")))
+            }
+            // Only resume a game that can still be played.
+            if (pieces.none { it != null && Engine.anyFit(b, it.shape) }) return false
+            for (p in pieces) if (p != null) Engine.reserveId(p.id)
+
+            gameId++
+            bestCelebrated = false
+            clearStreak = 0
+            newBestThisGame = false
+            floating.clear()
+            clearing = emptySet()
+            board = b
+            tray = pieces
+            score = o.getInt("score").coerceAtLeast(0)
+            shufflesLeft = o.getInt("shuffles").coerceIn(0, 2)
+            gameOver = false
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 
     // ------------------------------------------------------------------ internals
@@ -189,6 +310,7 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
             board = board.cleared(rows, cols)
             clearing = emptySet()
             checkGameOver()
+            if (!gameOver) saveGame()
         }
     }
 
@@ -245,6 +367,7 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
         val alive = tray.any { p -> p != null && Engine.anyFit(board, p.shape) }
         if (alive) return
         gameOver = true
+        clearSave()   // a finished game is not resumed: the next start is a new game
         fx.play("gameover")
         haptics.pattern(0, 40, 60, 40)
         val seconds = fx.durationMs(R.raw.gameover) / 1000.0

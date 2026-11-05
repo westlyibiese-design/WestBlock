@@ -38,5 +38,8 @@ class Board private constructor(private val cells: IntArray) {
 
     companion object {
         fun empty(): Board = Board(IntArray(SIZE * SIZE))
+
+        /** Rebuilds a board from saved numbers (row by row). Null if the list is the wrong size. */
+        fun fromInts(a: IntArray): Board? = if (a.size == SIZE * SIZE) Board(a.copyOf()) else null
     }
 }

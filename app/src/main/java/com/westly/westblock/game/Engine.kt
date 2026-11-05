@@ -41,6 +41,11 @@ object Engine {
 
     private var counter = 0L
 
+    /** After loading a saved game: new pieces must never reuse the id of a loaded one. */
+    fun reserveId(id: Long) {
+        if (counter <= id) counter = id + 1
+    }
+
     fun pieceSize(shape: List<Cell>): Pair<Int, Int> {
         var mr = 0
         var mc = 0
@@ -147,6 +152,20 @@ object Engine {
         }
 
         return PERMS.any { order -> rec(start, order, 0) }
+    }
+
+    /**
+     * Three new pieces that can all really be placed on [board] (one after the other, in any order).
+     * Tries every kind of piece first, then easier ones, and in the end only small ones.
+     */
+    fun makeFitTray(board: Board): List<Piece?> {
+        for (pool in listOf(SHAPES, EASY_SHAPES, SMALL_SHAPES)) {
+            repeat(60) {
+                val cand = List(3) { randPiece(pool) }
+                if (allThreeFit(board, cand)) return cand
+            }
+        }
+        return makeTray(board, SMALL_SHAPES)
     }
 
     fun makeTray(board: Board, pool: List<List<Cell>> = SHAPES): List<Piece?> {

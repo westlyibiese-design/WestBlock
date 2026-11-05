@@ -144,7 +144,11 @@ fun GameScreen(vm: GameViewModel) {
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Header(vm.score, vm.best)
+            Header(
+                vm.score, vm.best,
+                onScoreTap = { vm.onSecretTap(true) },
+                onBestTap = { vm.onSecretTap(false) },
+            )
             Spacer(Modifier.height(10.dp))
             ProgressToBest(vm.score, vm.best)
 

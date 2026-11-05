@@ -44,7 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
-fun Header(score: Int, best: Int) {
+fun Header(score: Int, best: Int, onScoreTap: () -> Unit = {}, onBestTap: () -> Unit = {}) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
         Text(
             text = "WEST BLOCK",
@@ -59,14 +59,14 @@ fun Header(score: Int, best: Int) {
         )
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            StatCard("SCORE", score, Modifier.weight(1f))
-            StatCard("BEST", best, Modifier.weight(1f))
+            StatCard("SCORE", score, Modifier.weight(1f), onScoreTap)
+            StatCard("BEST", best, Modifier.weight(1f), onBestTap)
         }
     }
 }
 
 @Composable
-private fun StatCard(label: String, value: Int, modifier: Modifier) {
+private fun StatCard(label: String, value: Int, modifier: Modifier, onTap: () -> Unit = {}) {
     val pop = remember { Animatable(1f) }
     LaunchedEffect(value) {
         if (value > 0) {
@@ -78,6 +78,7 @@ private fun StatCard(label: String, value: Int, modifier: Modifier) {
     Box(
         modifier = modifier
             .clip(shape)
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onTap)
             .background(Brush.verticalGradient(listOf(PanelTop, PanelBottom)))
             .border(1.dp, Rim, shape)
             .padding(vertical = 8.dp),
